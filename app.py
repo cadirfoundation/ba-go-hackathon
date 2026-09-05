@@ -514,17 +514,35 @@ with hdr_col1:
     st.subheader(f"🌍 Regional Performance Scorecards — {selected_title}")
 
 with hdr_col2:
-    date_preset = st.selectbox(
-        "📅 Date Filter Scope",
-        ["Last 30 Days", "Last 14 Days", "Last 7 Days", "Custom Range", "All Time"],
-        index=0
-    )
-    
+    col_preset, col_compare_chk = st.columns([1.8, 1])
+    with col_preset:
+        date_preset = st.selectbox(
+            "📅 Date Filter Scope",
+            ["Last 30 Days", "Last 14 Days", "Last 7 Days", "Custom Range", "All Time"],
+            index=0
+        )
+    with col_compare_chk:
+        st.markdown("<br>", unsafe_allow_html=True)
+        compare_on = st.checkbox("Compare", value=False)
+        
     start_date, end_date = None, None
     if date_preset == "Custom Range":
-        custom_dates = st.date_input("Select Date Range", [])
+        custom_dates = st.date_input("Select Date Range", [], key="primary_dates")
         if len(custom_dates) == 2:
             start_date, end_date = custom_dates[0], custom_dates[1]
+
+    compare_preset = None
+    start_compare_date, end_compare_date = None, None
+    if compare_on:
+        compare_preset = st.selectbox(
+            "🔄 Comparison Period",
+            ["Last 30 Days", "Last 14 Days", "Last 7 Days", "Custom Range", "All Time"],
+            index=1 if date_preset != "Last 14 Days" else 0
+        )
+        if compare_preset == "Custom Range":
+            custom_compare_dates = st.date_input("Select Compare Range", [], key="compare_dates")
+            if len(custom_compare_dates) == 2:
+                start_compare_date, end_compare_date = custom_compare_dates[0], custom_compare_dates[1]
 
 # Dynamic WHERE Clause Construction
 # Dynamic WHERE Clause Construction
