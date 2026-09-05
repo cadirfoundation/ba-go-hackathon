@@ -13,9 +13,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import clickhouse_tools
 
 # helper function for Gemini-powered action alerts
-def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_comp, target_reg, power_user_count):
+def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_comp, target_reg, 
+                             power_user_count, top_ecpm_region, top_ecpm_val, highest_roi_region, 
+                             highest_roi_val, highest_rpu_region, highest_rpu_val, avg_cpi):
     import json
-    # Default fallback alerts in case Gemini API is offline or unauthenticated
+    
+    # 6 pristine fallback cards
     fallback_alerts = {
         "alert1": {
             "badge": "HIGH PRIORITY",
@@ -34,6 +37,24 @@ def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_co
             "title": "SVOD Conversion Trigger",
             "text": f"Identified {power_user_count:,} power users watching 5+ episodes.",
             "action": f"Trigger ad-free SVOD trial pop-up after Episode 4 completion."
+        },
+        "alert4": {
+            "badge": "ACQUISITION",
+            "title": f"Focus User Acquisition on {top_ecpm_region}",
+            "text": f"High eCPM market detected in {top_ecpm_region} with average eCPM of ${top_ecpm_val:.2f}.",
+            "action": f"Pivot ad budget to scale user volume in {top_ecpm_region} to maximize ad yields."
+        },
+        "alert5": {
+            "badge": "ROI OPTIMIZATION",
+            "title": f"Acquisition ROI Alert for {highest_roi_region}",
+            "text": f"Optimized cost-to-revenue ratio in {highest_roi_region} with average CPI of ${avg_cpi:.2f}.",
+            "action": f"Scale campaigns in {highest_roi_region} as subscriber value yields high return on investment."
+        },
+        "alert6": {
+            "badge": "RPU GROWTH",
+            "title": f"Scale Yield in {highest_rpu_region}",
+            "text": f"Maximum RPU detected in {highest_rpu_region} with average RPU of ${highest_rpu_val:.3f}.",
+            "action": f"Launch premium interactive events in {highest_rpu_region} to further capitalize on high monetization."
         }
     }
     
@@ -46,17 +67,26 @@ def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_co
         1. Worst performing episode: Episode {worst_ep} where viewers drop off heavily around {worst_sec} seconds.
         2. High performing content: {top_growth_lang} dubbing in {target_reg} is achieving {top_growth_comp:.1f}% completion rate.
         3. Power users: {power_user_count:,} highly engaged users are watching 5+ episodes of our dramas.
+        4. High eCPM market: {top_ecpm_region} has the highest average eCPM of ${top_ecpm_val:.2f}.
+        5. CPI benchmark: Average Cost Per Install (CPI) is ${avg_cpi:.2f}. Highest ROI is in {highest_roi_region}.
+        6. Highest RPU: {highest_rpu_region} has the highest Revenue Per User (RPU) of ${highest_rpu_val:.3f}.
 
-        Generate exactly 3 short, punchy action alerts to show on our business dashboard:
-        - alert1 (HIGH PRIORITY): Address the Episode {worst_ep} drop-off anomaly. Highlight why viewers are exiting and specify an action to fix the cliffhanger.
+        Generate exactly 6 short, punchy action alerts to show on our business dashboard:
+        - alert1 (HIGH PRIORITY): Address the Episode {worst_ep} drop-off anomaly. Specify an action to fix the cliffhanger.
         - alert2 (OPPORTUNITY): Capitalize on scaling {top_growth_lang} dubbing in {target_reg}. Specify a marketing or ad spend UA action.
         - alert3 (MONETIZATION): Target SVOD conversions for the {power_user_count:,} power users. Specify a conversion trigger action after Episode 4.
+        - alert4 (ACQUISITION): Shift UA budget to the high eCPM market {top_ecpm_region} (${top_ecpm_val:.2f} eCPM). Recommend an acquisition strategy.
+        - alert5 (ROI OPTIMIZATION): Optimize ROI in {highest_roi_region} comparing RPU and CPI. Recommend scaling campaigns.
+        - alert6 (RPU GROWTH): Scale yields in {highest_rpu_region} (${highest_rpu_val:.3f} RPU). Recommend a premium monetization trigger.
 
         Your output must be a valid JSON object only, matching this structure:
         {{
             "alert1": {{"title": "...", "text": "...", "action": "..."}},
             "alert2": {{"title": "...", "text": "...", "action": "..."}},
-            "alert3": {{"title": "...", "text": "...", "action": "..."}}
+            "alert3": {{"title": "...", "text": "...", "action": "..."}},
+            "alert4": {{"title": "...", "text": "...", "action": "..."}},
+            "alert5": {{"title": "...", "text": "...", "action": "..."}},
+            "alert6": {{"title": "...", "text": "...", "action": "..."}}
         }}
         Do not include markdown blocks or any text outside of the JSON.
         """
@@ -66,7 +96,7 @@ def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_co
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.2
+                temperature=0.5
             )
         )
         
@@ -74,6 +104,9 @@ def get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_co
         alerts["alert1"]["badge"] = "HIGH PRIORITY"
         alerts["alert2"]["badge"] = "OPPORTUNITY"
         alerts["alert3"]["badge"] = "MONETIZATION"
+        alerts["alert4"]["badge"] = "ACQUISITION"
+        alerts["alert5"]["badge"] = "ROI OPTIMIZATION"
+        alerts["alert6"]["badge"] = "RPU GROWTH"
         return alerts
     except Exception as e:
         return fallback_alerts
@@ -461,35 +494,7 @@ st.markdown('<div class="sub-title">Real-Time Telemetry, Region-Wise Monetizatio
 
 # Sidebar Configuration
 with st.sidebar:
-    st.header("⚙️ Data Configuration")
-    try:
-        client = clickhouse_tools.get_db_client()
-        client.query("SELECT 1")
-        st.success("🟢 ClickHouse Connected")
-    except Exception as e:
-        st.error(f"🔴 ClickHouse Offline\n{str(e)}")
-        
-    
-    st.markdown("---")
-    st.markdown('<span style="font-size:18px; font-weight:bold; display:inline-block; margin-bottom:10px;">🟢 Connected Data Feeds</span>', unsafe_allow_html=True)
-    
-    feeds = [
-        {"name": "AdMob API", "table": "admob_impressions", "desc": "Ad Revenue & Impressions"},
-        {"name": "App Analytics", "table": "viewing_sessions & drop_offs", "desc": "Engagement & Drop-offs"},
-        {"name": "Google Ads API", "table": "regional_cpi", "desc": "Acquisition Cost & CPI"},
-        {"name": "Series CMS", "table": "drama_catalog", "desc": "MicroDrama Metadata"}
-    ]
-    
-    for feed in feeds:
-        with st.container(border=True):
-            col_feed_name, col_feed_status = st.columns([2.5, 1])
-            with col_feed_name:
-                st.markdown(f"**{feed['name']}**")
-                st.caption(f"`{feed['table']}`")
-            with col_feed_status:
-                st.markdown('<span style="background-color:#1E6F3E; color:#2ECC71; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; display:inline-block; margin-top:5px; border:1px solid #2ECC71;">LIVE</span>', unsafe_allow_html=True)
-    st.markdown("---")
-    st.subheader("🎯 Content Filters")
+    st.header("🎯 Content Filters")
     
     dramas_df = run_query_df("SELECT drama_id, title FROM drama_catalog ORDER BY drama_id ASC")
     drama_options = {"All Dramas": "All"}
@@ -504,6 +509,73 @@ with st.sidebar:
     regions_df = run_query_df("SELECT DISTINCT region FROM viewing_sessions ORDER BY region ASC")
     selected_region = st.selectbox("Region Focus", ["All Regions"] + (regions_df["region"].tolist() if not regions_df.empty else []))
     
+    st.markdown("---")
+    
+    st.header("⚙️ Data Configuration")
+    try:
+        client = clickhouse_tools.get_db_client()
+        client.query("SELECT 1")
+        st.success("🟢 ClickHouse Connected")
+    except Exception as e:
+        st.error(f"🔴 ClickHouse Offline\n{str(e)}")
+        
+    st.markdown("---")
+    st.markdown('<span style="font-size:16px; font-weight:bold; display:inline-block; margin-bottom:10px;">🟢 Connected Data Feeds<br><span style="font-size:11px; color:#BDC3C7; font-weight:normal;">(Available to Connect as Business Goes Live)</span></span>', unsafe_allow_html=True)
+    
+    feeds_config = [
+        {
+            "name": "AdMob API",
+            "table": "admob_impressions",
+            "desc": "Ad Revenue & Impressions",
+            "endpoint": "https://api.admob.google.com/v1/accounts/pub-9428541/reports",
+            "auth_method": "OAuth 2.0 (Service Account)",
+            "sync_interval": "Near Real-Time Stream (10s)",
+            "schema_mapping": '{"impressions": "count", "revenue": "revenue_usd"}'
+        },
+        {
+            "name": "App Analytics",
+            "table": "viewing_sessions & drop_offs",
+            "desc": "Engagement & Drop-offs",
+            "endpoint": "s3://ba-go-telemetry-prod/sessions/daily/",
+            "auth_method": "AWS IAM Role Assumption",
+            "sync_interval": "Kinesis Firehose Real-Time Push",
+            "schema_mapping": '{"session_id": "String", "completion": "Float64"}'
+        },
+        {
+            "name": "Google Ads API",
+            "table": "regional_cpi",
+            "desc": "Acquisition Cost & CPI",
+            "endpoint": "https://googleads.googleapis.com/v15/customers/849-105-3918",
+            "auth_method": "GCP Default Credentials",
+            "sync_interval": "Hourly Batch Sync",
+            "schema_mapping": '{"cost": "cost_usd", "installs": "installs"}'
+        },
+        {
+            "name": "Series CMS",
+            "table": "drama_catalog",
+            "desc": "MicroDrama Metadata",
+            "endpoint": "https://cms.bitdrama.io/v2/graphql/series",
+            "auth_method": "API Bearer Token",
+            "sync_interval": "Every 24 Hours",
+            "schema_mapping": '{"series_id": "drama_id", "title": "title"}'
+        }
+    ]
+    
+    for feed in feeds_config:
+        with st.container(border=True):
+            col_feed_name, col_feed_status = st.columns([2.5, 1])
+            with col_feed_name:
+                st.markdown(f"**{feed['name']}**")
+                st.caption(f"`{feed['table']}`")
+            with col_feed_status:
+                st.markdown('<span style="background-color:#1E6F3E; color:#2ECC71; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; display:inline-block; margin-top:5px; border:1px solid #2ECC71;">LIVE</span>', unsafe_allow_html=True)
+            
+            with st.expander("⚙️ Connection Settings (Read Only)", expanded=False):
+                st.markdown(f"**Endpoint:**\n`{feed['endpoint']}`")
+                st.markdown(f"**Auth:**\n`{feed['auth_method']}`")
+                st.markdown(f"**Sync:**\n`{feed['sync_interval']}`")
+                st.markdown(f"**Mapping:**\n`{feed['schema_mapping']}`")
+                
     st.markdown("---")
     st.caption("Powered by Gemini 2.5 Pro & ClickHouse Cloud")
 
@@ -652,6 +724,18 @@ else:
 st.markdown("---")
 
 # ================= BODY: 3-COLUMN CONTROL ROOM =================
+# Ensure total_rev and total_sessions are always defined (for use in lower components)
+if compare_on and where_clause_compare:
+    total_rev_df = run_query_df(f"SELECT sum(revenue_usd) AS rev FROM admob_impressions {where_clause}")
+    total_rev = total_rev_df["rev"].iloc[0] if not total_rev_df.empty and pd.notnull(total_rev_df["rev"].iloc[0]) else 0.0
+    total_sess_df = run_query_df(f"SELECT count() AS cnt FROM viewing_sessions {where_clause}")
+    total_sessions = total_sess_df["cnt"].iloc[0] if not total_sess_df.empty and pd.notnull(total_sess_df["cnt"].iloc[0]) else 0
+else:
+    if 'total_rev' not in locals():
+        total_rev = 0.0
+    if 'total_sessions' not in locals():
+        total_sessions = 0
+
 st.markdown("---")
 st.subheader("🤖 BYTIntelligence")
 
@@ -724,32 +808,82 @@ with col_center:
     target_reg = selected_region if selected_region != "All Regions" else "Canada"
     power_user_count = int(total_sessions * 0.12) if total_sessions > 0 else 450
 
-    # Fetch Gemini-powered real-time alerts
-    ai_alerts = get_gemini_action_alerts(worst_ep, worst_sec, top_growth_lang, top_growth_comp, target_reg, power_user_count)
+    # Fetch Gemini-powered real-time alerts with extended metrics
+    # Extract extra stats from final_scorecards dynamically for AI engine
+    top_ecpm_region = "UK"
+    top_ecpm_val = 5.39
+    highest_rpu_region = "UK"
+    highest_rpu_val = 0.010
+    highest_roi_region = "South Asia"
+    highest_roi_val = 0.007
+    avg_cpi = 0.50
+
+    if 'final_scorecards' in locals() and not final_scorecards.empty:
+        df_clean = final_scorecards[final_scorecards["Region"] != "TOTAL / OVERALL"].copy()
+        
+        def parse_float(val):
+            if isinstance(val, (int, float)):
+                return float(val)
+            import re
+            cleaned = re.sub(r'<[^>]+>', '', str(val)).replace('$', '').replace('%', '').replace(',', '').strip()
+            match = re.search(r'[\\d\\.]+', cleaned)
+            return float(match.group()) if match else 0.0
+
+        if not df_clean.empty:
+            df_clean["parsed_ecpm"] = df_clean["eCPM ($)"].apply(parse_float) if "eCPM ($)" in df_clean.columns else 0.0
+            df_clean["parsed_rpu"] = df_clean["RPU ($)"].apply(parse_float) if "RPU ($)" in df_clean.columns else 0.0
+            df_clean["parsed_cpi"] = df_clean["CPI ($)"].apply(parse_float) if "CPI ($)" in df_clean.columns else 0.50
+            df_clean["parsed_roi"] = df_clean["parsed_rpu"] - df_clean["parsed_cpi"]
+            
+            top_ecpm_row = df_clean.loc[df_clean["parsed_ecpm"].idxmax()]
+            top_ecpm_region = top_ecpm_row["Region"]
+            top_ecpm_val = top_ecpm_row["parsed_ecpm"]
+            
+            top_rpu_row = df_clean.loc[df_clean["parsed_rpu"].idxmax()]
+            highest_rpu_region = top_rpu_row["Region"]
+            highest_rpu_val = top_rpu_row["parsed_rpu"]
+            
+            top_roi_row = df_clean.loc[df_clean["parsed_roi"].idxmax()]
+            highest_roi_region = top_roi_row["Region"]
+            highest_roi_val = top_roi_row["parsed_roi"]
+            
+            avg_cpi = df_clean["parsed_cpi"].mean()
+
+    ai_alerts = get_gemini_action_alerts(
+        worst_ep, worst_sec, top_growth_lang, top_growth_comp, target_reg, power_user_count,
+        top_ecpm_region, top_ecpm_val, highest_roi_region, highest_roi_val, highest_rpu_region, highest_rpu_val, avg_cpi
+    )
     
-    # Render alert 1 (HIGH PRIORITY)
-    with st.container(border=True):
-        st.markdown(f"<span class='badge-high'>HIGH PRIORITY</span> <b>{ai_alerts['alert1']['title']}</b>", unsafe_allow_html=True)
-        st.markdown(f"{ai_alerts['alert1']['text']}<br><b>Action:</b> {ai_alerts['alert1']['action']}", unsafe_allow_html=True)
-        alert1_send_text = f"{ai_alerts['alert1']['title']}: {ai_alerts['alert1']['text']} -> Action: {ai_alerts['alert1']['action']}"
-        if st.button("📬 Send to Team", key="alert_send_1", use_container_width=True):
-            send_to_slack("High Priority Churn Alert", alert1_send_text)
+    badge_map = {
+        "HIGH PRIORITY": "badge-high",
+        "OPPORTUNITY": "badge-opt",
+        "MONETIZATION": "badge-mon",
+        "ACQUISITION": "badge-acq",
+        "ROI OPTIMIZATION": "badge-roi",
+        "RPU GROWTH": "badge-rpu"
+    }
+    
+    st.markdown("""
+        <style>
+        .badge-acq { background-color: #2980B9; color: #FFFFFF; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+        .badge-roi { background-color: #8E44AD; color: #FFFFFF; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+        .badge-rpu { background-color: #27AE60; color: #FFFFFF; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+        </style>
+    """, unsafe_allow_html=True)
 
-    # Render alert 2 (OPPORTUNITY)
-    with st.container(border=True):
-        st.markdown(f"<span class='badge-opt'>OPPORTUNITY</span> <b>{ai_alerts['alert2']['title']}</b>", unsafe_allow_html=True)
-        st.markdown(f"{ai_alerts['alert2']['text']}<br><b>Action:</b> {ai_alerts['alert2']['action']}", unsafe_allow_html=True)
-        alert2_send_text = f"{ai_alerts['alert2']['title']}: {ai_alerts['alert2']['text']} -> Action: {ai_alerts['alert2']['action']}"
-        if st.button("📬 Send to Team", key="alert_send_2", use_container_width=True):
-            send_to_slack("Growth Opportunity Alert", alert2_send_text)
-
-    # Render alert 3 (MONETIZATION)
-    with st.container(border=True):
-        st.markdown(f"<span class='badge-mon'>MONETIZATION</span> <b>{ai_alerts['alert3']['title']}</b>", unsafe_allow_html=True)
-        st.markdown(f"{ai_alerts['alert3']['text']}<br><b>Action:</b> {ai_alerts['alert3']['action']}", unsafe_allow_html=True)
-        alert3_send_text = f"{ai_alerts['alert3']['title']}: {ai_alerts['alert3']['text']} -> Action: {ai_alerts['alert3']['action']}"
-        if st.button("📬 Send to Team", key="alert_send_3", use_container_width=True):
-            send_to_slack("Monetization Conversion Alert", alert3_send_text)
+    for i in range(1, 7):
+        alert_key = f"alert{i}"
+        if alert_key in ai_alerts:
+            alert = ai_alerts[alert_key]
+            badge_text = alert.get("badge", "ALERT")
+            badge_cls = badge_map.get(badge_text, "badge-high")
+            
+            with st.container(border=True):
+                st.markdown(f"<span class='{badge_cls}'>{badge_text}</span> <b>{alert['title']}</b>", unsafe_allow_html=True)
+                st.markdown(f"{alert['text']}<br><b>Action:</b> {alert['action']}", unsafe_allow_html=True)
+                send_text = f"{alert['title']}: {alert['text']} -> Action: {alert['action']}"
+                if st.button("📬 Send to Team", key=f"alert_send_{i}", use_container_width=True):
+                    send_to_slack(f"AI Decision Room - {badge_text}", send_text)
 
     st.markdown("---")
 
@@ -800,7 +934,76 @@ with col_right:
             st.plotly_chart(fig_age, use_container_width=True)
 
 st.markdown("---")
-st.markdown('<div class="card-header">🏆 Drama Title Performance Leaderboard</div>', unsafe_allow_html=True)
+
+# Leaderboard Header and dedicated Date/Compare Filters
+ld_col1, ld_col2 = st.columns([3, 1.2])
+
+with ld_col1:
+    st.markdown('<div class="card-header">🏆 Drama Title Performance Leaderboard</div>', unsafe_allow_html=True)
+
+with ld_col2:
+    col_preset_ld, col_compare_ld = st.columns([1.8, 1])
+    with col_preset_ld:
+        date_preset_ld = st.selectbox(
+            "📅 Leaderboard Date Filter",
+            ["Last 30 Days", "Last 14 Days", "Last 7 Days", "Custom Range", "All Time"],
+            index=0,
+            key="ld_date_preset"
+        )
+    with col_compare_ld:
+        st.markdown("<br>", unsafe_allow_html=True)
+        compare_on_ld = st.checkbox("Compare Leaderboard", value=False, key="ld_compare_on")
+
+# Dynamic WHERE Clause Construction for Leaderboard
+base_conds_ld = []
+if selected_drama != "All":
+    base_conds_ld.append(f"drama_id = {selected_drama}")
+if selected_region != "All Regions":
+    base_conds_ld.append(f"region = '{selected_region}'")
+
+# Primary Period Date Conditions for Leaderboard
+where_conds_primary_ld = base_conds_ld.copy()
+start_date_ld, end_date_ld = None, None
+if date_preset_ld == "Last 7 Days":
+    where_conds_primary_ld.append("created_at >= now() - INTERVAL 7 DAY")
+elif date_preset_ld == "Last 14 Days":
+    where_conds_primary_ld.append("created_at >= now() - INTERVAL 14 DAY")
+elif date_preset_ld == "Last 30 Days":
+    where_conds_primary_ld.append("created_at >= now() - INTERVAL 30 DAY")
+elif date_preset_ld == "Custom Range":
+    custom_dates_ld = st.date_input("Select Leaderboard Range", [], key="ld_custom_dates")
+    if len(custom_dates_ld) == 2:
+        start_date_ld, end_date_ld = custom_dates_ld[0], custom_dates_ld[1]
+        where_conds_primary_ld.append(f"created_at >= '{start_date_ld} 00:00:00' AND created_at <= '{end_date_ld} 23:59:59'")
+
+where_clause_ld = f"WHERE {' AND '.join(where_conds_primary_ld)}" if where_conds_primary_ld else ""
+
+# Comparison Period Date Conditions for Leaderboard
+where_clause_compare_ld = ""
+if compare_on_ld:
+    compare_preset_ld = st.selectbox(
+        "🔄 Comparison Period",
+        ["Last 30 Days", "Last 14 Days", "Last 7 Days", "Custom Range", "All Time"],
+        index=1 if date_preset_ld != "Last 14 Days" else 0,
+        key="ld_compare_preset"
+    )
+    
+    where_conds_compare_ld = base_conds_ld.copy()
+    start_compare_date_ld, end_compare_date_ld = None, None
+    
+    if compare_preset_ld == "Last 7 Days":
+        where_conds_compare_ld.append("created_at >= now() - INTERVAL 7 DAY")
+    elif compare_preset_ld == "Last 14 Days":
+        where_conds_compare_ld.append("created_at >= now() - INTERVAL 14 DAY")
+    elif compare_preset_ld == "Last 30 Days":
+        where_conds_compare_ld.append("created_at >= now() - INTERVAL 30 DAY")
+    elif compare_preset_ld == "Custom Range":
+        custom_compare_dates_ld = st.date_input("Select Compare Range", [], key="ld_compare_dates_range")
+        if len(custom_compare_dates_ld) == 2:
+            start_compare_date_ld, end_compare_date_ld = custom_compare_dates_ld[0], custom_compare_dates_ld[1]
+            where_conds_compare_ld.append(f"created_at >= '{start_compare_date_ld} 00:00:00' AND created_at <= '{end_compare_date_ld} 23:59:59'")
+            
+    where_clause_compare_ld = f"WHERE {' AND '.join(where_conds_compare_ld)}" if where_conds_compare_ld else ""
 
 drama_perf_df = run_query_df(f"""
     SELECT 
@@ -817,13 +1020,13 @@ drama_perf_df = run_query_df(f"""
         FROM admob_impressions
         GROUP BY title
     ) r ON v.title = r.title
-    {where_clause}
+    {where_clause_ld}
     GROUP BY v.title
     ORDER BY "Episodes Watch" DESC
 """)
 
-if compare_on and where_clause_compare:
-    final_leaderboard = get_comparison_leaderboard(where_clause, where_clause_compare)
+if compare_on_ld and where_clause_compare_ld:
+    final_leaderboard = get_comparison_leaderboard(where_clause_ld, where_clause_compare_ld)
     st_dataframe_custom(final_leaderboard, height=320)
 else:
     if not drama_perf_df.empty:
@@ -834,3 +1037,15 @@ else:
         formatted_df["Active Users"] = formatted_df["Active Users"].map(lambda x: f"{x:,}")
         
         st_dataframe_custom(formatted_df, height=320)
+
+
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; color: gray; font-size: 14px;">
+        <p><strong>Powered for Hackathon.</strong> To be used by the management.</p>
+        <p>Open source | Tools used: Google Cloud and Clickhouse</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
