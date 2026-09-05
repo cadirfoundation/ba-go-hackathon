@@ -82,6 +82,249 @@ import agent_orchestrator
 
 load_dotenv()
 
+# Dynamic Trend Badge Formatter
+def format_trend(val_primary, val_compare, format_str, is_currency=False, is_percent=False, is_rpu=False):
+    import pandas as pd
+    
+    # Format primary value
+    if is_currency:
+        if is_rpu:
+            primary_formatted = f"${val_primary:,.3f}"
+        else:
+            primary_formatted = f"${val_primary:,.2f}"
+    elif is_percent:
+        primary_formatted = f"{val_primary:.2f}%"
+    else:
+        primary_formatted = f"{val_primary:,}" if isinstance(val_primary, (int, float)) else f"{val_primary}"
+        
+    if val_compare is None or pd.isnull(val_compare) or val_compare == 0:
+        return primary_formatted
+        
+    pct_change = ((val_primary - val_compare) / val_compare) * 100
+    
+    if pct_change > 0.05:
+        return f'{primary_formatted} <span style="color:#2ECC71; font-size:11px; font-weight:bold; margin-left:5px;">▲ {pct_change:.1f}%</span>'
+    elif pct_change < -0.05:
+        return f'{primary_formatted} <span style="color:#E74C3C; font-size:11px; font-weight:bold; margin-left:5px;">▼ {abs(pct_change):.1f}%</span>'
+    else:
+        return f'{primary_formatted} <span style="color:#7F8C8D; font-size:11px; font-weight:bold; margin-left:5px;">0.0%</span>'
+
+# Comparison Scorecards Logic
+def get_comparison_scorecards(where_clause_primary, where_clause_compare):
+    import pandas as pd
+    p_scorecard = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            topK(1)(city)[1] AS "Top City",
+            count() AS "Active Sessions",
+            avg(completion_rate) * 100 AS "Avg Completion %",
+            topK(1)(content_language)[1] AS "Top Language",
+            avg(watch_time_seconds) AS "Avg Watch Sec"
+        FROM viewing_sessions
+        {where_clause_primary}
+        GROUP BY region
+    """)
+    
+    p_rev = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            sum(revenue_usd) AS "AdMob Revenue ($)",
+            avg(estimated_ecpm_usd) AS "eCPM ($)"
+        FROM admob_impressions
+        {where_clause_primary}
+        GROUP BY region
+    """)
+    
+    if not p_scorecard.empty and not p_rev.empty:
+        primary_df = pd.merge(p_scorecard, p_rev, on="Region", how="left").fillna(0)
+    else:
+        primary_df = p_scorecard
+        
+    if not primary_df.empty:
+        primary_df["CPI ($)"] = primary_df["Region"].map(lambda r: REGIONAL_CPI_MAP.get(r, 0.50))
+        primary_df["RPU ($)"] = primary_df.apply(
+            lambda r: r["AdMob Revenue ($)"] / r["Active Sessions"] if r["Active Sessions"] > 0 else 0.0,
+            axis=1
+        )
+        
+    c_scorecard = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            count() AS "Active Sessions",
+            avg(completion_rate) * 100 AS "Avg Completion %",
+            avg(watch_time_seconds) AS "Avg Watch Sec"
+        FROM viewing_sessions
+        {where_clause_compare}
+        GROUP BY region
+    """)
+    
+    c_rev = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            sum(revenue_usd) AS "AdMob Revenue ($)",
+            avg(estimated_ecpm_usd) AS "eCPM ($)"
+        FROM admob_impressions
+        {where_clause_compare}
+        GROUP BY region
+    """)
+    
+    if not c_scorecard.empty and not c_rev.empty:
+        compare_df = pd.merge(c_scorecard, c_rev, on="Region", how="left").fillna(0)
+    else:
+        compare_df = c_scorecard
+        
+    if not compare_df.empty:
+        compare_df["CPI ($)"] = compare_df["Region"].map(lambda r: REGIONAL_CPI_MAP.get(r, 0.50))
+        compare_df["RPU ($)"] = compare_df.apply(
+            lambda r: r["AdMob Revenue ($)"] / r["Active Sessions"] if r["Active Sessions"] > 0 else 0.0,
+            axis=1
+        )
+        
+    merged = pd.merge(primary_df, compare_df, on="Region", suffixes=("_p", "_c"), how="left")
+    
+    result_rows = []
+    for _, row in merged.iterrows():
+        region = row["Region"]
+        top_city = row["Top City"]
+        top_lang = row["Top Language"]
+        
+        active_sess = format_trend(row["Active Sessions_p"], row["Active Sessions_c"], "{:,}")
+        avg_comp = format_trend(row["Avg Completion %_p"], row["Avg Completion %_c"], "", is_percent=True)
+        avg_watch = format_trend(row["Avg Watch Sec_p"], row["Avg Watch Sec_c"], "{:.2f}")
+        admob_rev = format_trend(row["AdMob Revenue ($)_p"], row["AdMob Revenue ($)_c"], "", is_currency=True)
+        ecpm = format_trend(row["eCPM ($)_p"], row["eCPM ($)_c"], "", is_currency=True)
+        cpi = format_trend(row["CPI ($)_p"], row["CPI ($)_c"], "", is_currency=True)
+        rpu = format_trend(row["RPU ($)_p"], row["RPU ($)_c"], "", is_currency=True, is_rpu=True)
+        
+        result_rows.append({
+            "Region": region,
+            "Top City": top_city,
+            "Active Sessions": active_sess,
+            "Avg Completion %": avg_comp,
+            "Top Language": top_lang,
+            "Avg Watch Sec": avg_watch,
+            "AdMob Revenue ($)": admob_rev,
+            "eCPM ($)": ecpm,
+            "CPI ($)": cpi,
+            "RPU ($)": rpu
+        })
+        
+    total_sess_p = primary_df["Active Sessions"].sum() if not primary_df.empty else 0
+    total_sess_c = compare_df["Active Sessions"].sum() if not compare_df.empty else 0
+    
+    avg_comp_p = primary_df["Avg Completion %"].mean() if not primary_df.empty else 0
+    avg_comp_c = compare_df["Avg Completion %"].mean() if not compare_df.empty else 0
+    
+    avg_watch_p = primary_df["Avg Watch Sec"].mean() if not primary_df.empty else 0
+    avg_watch_c = compare_df["Avg Watch Sec"].mean() if not compare_df.empty else 0
+    
+    total_rev_p = primary_df["AdMob Revenue ($)"].sum() if not primary_df.empty else 0
+    total_rev_c = compare_df["AdMob Revenue ($)"].sum() if not compare_df.empty else 0
+    
+    avg_ecpm_p = primary_df["eCPM ($)"].mean() if not primary_df.empty else 0
+    avg_ecpm_c = compare_df["eCPM ($)"].mean() if not compare_df.empty else 0
+    
+    avg_cpi_p = primary_df["CPI ($)"].mean() if not primary_df.empty else 0
+    avg_cpi_c = compare_df["CPI ($)"].mean() if not compare_df.empty else 0
+    
+    overall_rpu_p = total_rev_p / total_sess_p if total_sess_p > 0 else 0
+    overall_rpu_c = total_rev_c / total_sess_c if total_sess_c > 0 else 0
+    
+    total_row = {
+        "Region": "TOTAL / OVERALL",
+        "Top City": "All Cities",
+        "Active Sessions": format_trend(total_sess_p, total_sess_c, "{:,}"),
+        "Avg Completion %": format_trend(avg_comp_p, avg_comp_c, "", is_percent=True),
+        "Top Language": "Mixed",
+        "Avg Watch Sec": format_trend(avg_watch_p, avg_watch_c, "{:.2f}"),
+        "AdMob Revenue ($)": format_trend(total_rev_p, total_rev_c, "", is_currency=True),
+        "eCPM ($)": format_trend(avg_ecpm_p, avg_ecpm_c, "", is_currency=True),
+        "CPI ($)": format_trend(avg_cpi_p, avg_cpi_c, "", is_currency=True),
+        "RPU ($)": format_trend(overall_rpu_p, overall_rpu_c, "", is_currency=True, is_rpu=True)
+    }
+    
+    final_df = pd.DataFrame(result_rows)
+    final_df = pd.concat([final_df, pd.DataFrame([total_row])], ignore_index=True)
+    return final_df
+
+# Comparison Leaderboard Logic
+def get_comparison_leaderboard(where_clause_primary, where_clause_compare):
+    import pandas as pd
+    p_df = run_query_df(f"""
+        SELECT 
+            v.title AS "Drama Name",
+            topK(1)(v.region)[1] AS "Top Country",
+            topK(1)(v.content_language)[1] AS "Language",
+            count() AS "Episodes Watch",
+            round(avg(v.completion_rate) * 100, 1) AS "Completion Rate",
+            round(coalesce(any(r.revenue), 0), 2) AS "Revenue",
+            count(DISTINCT v.user_id) AS "Active Users"
+        FROM viewing_sessions v
+        LEFT JOIN (
+            SELECT title, sum(revenue_usd) AS revenue
+            FROM admob_impressions
+            GROUP BY title
+        ) r ON v.title = r.title
+        {where_clause_primary}
+        GROUP BY v.title
+    """)
+    
+    c_df = run_query_df(f"""
+        SELECT 
+            v.title AS "Drama Name",
+            count() AS "Episodes Watch",
+            round(avg(v.completion_rate) * 100, 1) AS "Completion Rate",
+            round(coalesce(any(r.revenue), 0), 2) AS "Revenue",
+            count(DISTINCT v.user_id) AS "Active Users"
+        FROM viewing_sessions v
+        LEFT JOIN (
+            SELECT title, sum(revenue_usd) AS revenue
+            FROM admob_impressions
+            GROUP BY title
+        ) r ON v.title = r.title
+        {where_clause_compare}
+        GROUP BY v.title
+    """)
+    
+    if p_df.empty:
+        return p_df
+        
+    if c_df.empty:
+        compare_df = p_df.copy()
+        for col in ["Episodes Watch", "Completion Rate", "Revenue", "Active Users"]:
+            compare_df[col] = 0
+    else:
+        compare_df = c_df
+        
+    merged = pd.merge(p_df, compare_df, on="Drama Name", suffixes=("_p", "_c"), how="left")
+    
+    result_rows = []
+    for _, row in merged.iterrows():
+        drama = row["Drama Name"]
+        top_country = row["Top Country"]
+        lang = row["Language"]
+        
+        ep_watch = format_trend(row["Episodes Watch_p"], row["Episodes Watch_c"], "{:,}")
+        comp_rate = format_trend(row["Completion Rate_p"], row["Completion Rate_c"], "", is_percent=True)
+        revenue = format_trend(row["Revenue_p"], row["Revenue_c"], "", is_currency=True)
+        active_users = format_trend(row["Active Users_p"], row["Active Users_c"], "{:,}")
+        
+        result_rows.append({
+            "Drama Name": drama,
+            "Top Country": top_country,
+            "Language": lang,
+            "Episodes Watch": ep_watch,
+            "Completion Rate": comp_rate,
+            "Revenue": revenue,
+            "Active Users": active_users
+        })
+        
+    final_df = pd.DataFrame(result_rows)
+    final_df["sort_key"] = merged["Episodes Watch_p"]
+    final_df = final_df.sort_values(by="sort_key", ascending=False).drop(columns=["sort_key"])
+    return final_df
+
+
 # Page Configuration
 st.set_page_config(
     page_title="BA_Go | Decision Control Room",
@@ -128,7 +371,7 @@ def st_dataframe_custom(df: pd.DataFrame, height: int = 270):
         elif display_df[col].dtype in ['int64', 'int32', 'uint32', 'uint16', 'uint8']:
             display_df[col] = display_df[col].map(lambda x: f"{x:,}" if pd.notnull(x) else "")
 
-    html = display_df.to_html(index=False, classes='custom-table', border=0)
+    html = display_df.to_html(index=False, classes='custom-table', border=0, escape=False)
     styled_html = f"""
     <div style="max-height: {height}px; overflow-y: auto; border: 1px solid #262730; border-radius: 8px;">
         <style>
@@ -284,87 +527,109 @@ with hdr_col2:
             start_date, end_date = custom_dates[0], custom_dates[1]
 
 # Dynamic WHERE Clause Construction
-where_conds = []
+# Dynamic WHERE Clause Construction
+base_conds = []
 if selected_drama != "All":
-    where_conds.append(f"drama_id = {selected_drama}")
+    base_conds.append(f"drama_id = {selected_drama}")
 if selected_region != "All Regions":
-    where_conds.append(f"region = '{selected_region}'")
+    base_conds.append(f"region = '{selected_region}'")
 
+# Primary Period Date Conditions
+where_conds_primary = base_conds.copy()
 if date_preset == "Last 7 Days":
-    where_conds.append("created_at >= now() - INTERVAL 7 DAY")
+    where_conds_primary.append("created_at >= now() - INTERVAL 7 DAY")
 elif date_preset == "Last 14 Days":
-    where_conds.append("created_at >= now() - INTERVAL 14 DAY")
+    where_conds_primary.append("created_at >= now() - INTERVAL 14 DAY")
 elif date_preset == "Last 30 Days":
-    where_conds.append("created_at >= now() - INTERVAL 30 DAY")
+    where_conds_primary.append("created_at >= now() - INTERVAL 30 DAY")
 elif date_preset == "Custom Range" and start_date and end_date:
-    where_conds.append(f"created_at >= '{start_date} 00:00:00' AND created_at <= '{end_date} 23:59:59'")
+    where_conds_primary.append(f"created_at >= '{start_date} 00:00:00' AND created_at <= '{end_date} 23:59:59'")
 
-where_clause = f"WHERE {' AND '.join(where_conds)}" if where_conds else ""
+where_clause = f"WHERE {' AND '.join(where_conds_primary)}" if where_conds_primary else ""
+
+# Comparison Period Date Conditions
+where_clause_compare = ""
+if compare_on and compare_preset:
+    where_conds_compare = base_conds.copy()
+    if compare_preset == "Last 7 Days":
+        where_conds_compare.append("created_at >= now() - INTERVAL 7 DAY")
+    elif compare_preset == "Last 14 Days":
+        where_conds_compare.append("created_at >= now() - INTERVAL 14 DAY")
+    elif compare_preset == "Last 30 Days":
+        where_conds_compare.append("created_at >= now() - INTERVAL 30 DAY")
+    elif compare_preset == "Custom Range" and start_compare_date and end_compare_date:
+        where_conds_compare.append(f"created_at >= '{start_compare_date} 00:00:00' AND created_at <= '{end_compare_date} 23:59:59'")
+    
+    where_clause_compare = f"WHERE {' AND '.join(where_conds_compare)}" if where_conds_compare else ""
 
 # Scorecard Matrix Table with RPU ($)
-region_scorecard_df = run_query_df(f"""
-    SELECT 
-        region AS "Region",
-        topK(1)(city)[1] AS "Top City",
-        count() AS "Active Sessions",
-        avg(completion_rate) * 100 AS "Avg Completion %",
-        topK(1)(content_language)[1] AS "Top Language",
-        avg(watch_time_seconds) AS "Avg Watch Sec"
-    FROM viewing_sessions
-    {where_clause}
-    GROUP BY region
-    ORDER BY "Active Sessions" DESC
-""")
-
-region_rev_df = run_query_df(f"""
-    SELECT 
-        region AS "Region",
-        sum(revenue_usd) AS "AdMob Revenue ($)",
-        avg(estimated_ecpm_usd) AS "eCPM ($)"
-    FROM admob_impressions
-    {where_clause}
-    GROUP BY region
-""")
-
-if not region_scorecard_df.empty and not region_rev_df.empty:
-    merged_scorecards = pd.merge(region_scorecard_df, region_rev_df, on="Region", how="left").fillna(0)
-else:
-    merged_scorecards = region_scorecard_df
-
-if not merged_scorecards.empty:
-    merged_scorecards["CPI ($)"] = merged_scorecards["Region"].map(lambda r: REGIONAL_CPI_MAP.get(r, 0.50))
-    
-    # Calculate RPU (Revenue per User / Session)
-    merged_scorecards["RPU ($)"] = merged_scorecards.apply(
-        lambda r: r["AdMob Revenue ($)"] / r["Active Sessions"] if r["Active Sessions"] > 0 else 0.0,
-        axis=1
-    )
-    
-    total_sessions = merged_scorecards["Active Sessions"].sum()
-    avg_comp = merged_scorecards["Avg Completion %"].mean()
-    avg_watch = merged_scorecards["Avg Watch Sec"].mean()
-    total_rev = merged_scorecards["AdMob Revenue ($)"].sum() if "AdMob Revenue ($)" in merged_scorecards else 0.0
-    avg_ecpm = merged_scorecards["eCPM ($)"].mean() if "eCPM ($)" in merged_scorecards else 0.0
-    avg_cpi = merged_scorecards["CPI ($)"].mean()
-    overall_rpu = total_rev / total_sessions if total_sessions > 0 else 0.0
-
-    total_row = pd.DataFrame([{
-        "Region": "TOTAL / OVERALL",
-        "Top City": "All Cities",
-        "Active Sessions": total_sessions,
-        "Avg Completion %": avg_comp,
-        "Top Language": "Mixed",
-        "Avg Watch Sec": avg_watch,
-        "AdMob Revenue ($)": total_rev,
-        "eCPM ($)": avg_ecpm,
-        "CPI ($)": avg_cpi,
-        "RPU ($)": overall_rpu
-    }])
-
-    final_scorecards = pd.concat([merged_scorecards, total_row], ignore_index=True)
+if compare_on and where_clause_compare:
+    final_scorecards = get_comparison_scorecards(where_clause, where_clause_compare)
     st_dataframe_custom(final_scorecards, height=270)
 else:
-    st.info("No regional data found for the selected filter combination.")
+    region_scorecard_df = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            topK(1)(city)[1] AS "Top City",
+            count() AS "Active Sessions",
+            avg(completion_rate) * 100 AS "Avg Completion %",
+            topK(1)(content_language)[1] AS "Top Language",
+            avg(watch_time_seconds) AS "Avg Watch Sec"
+        FROM viewing_sessions
+        {where_clause}
+        GROUP BY region
+        ORDER BY "Active Sessions" DESC
+    """)
+
+    region_rev_df = run_query_df(f"""
+        SELECT 
+            region AS "Region",
+            sum(revenue_usd) AS "AdMob Revenue ($)",
+            avg(estimated_ecpm_usd) AS "eCPM ($)"
+        FROM admob_impressions
+        {where_clause}
+        GROUP BY region
+    """)
+
+    if not region_scorecard_df.empty and not region_rev_df.empty:
+        merged_scorecards = pd.merge(region_scorecard_df, region_rev_df, on="Region", how="left").fillna(0)
+    else:
+        merged_scorecards = region_scorecard_df
+
+    if not merged_scorecards.empty:
+        merged_scorecards["CPI ($)"] = merged_scorecards["Region"].map(lambda r: REGIONAL_CPI_MAP.get(r, 0.50))
+        
+        # Calculate RPU (Revenue per User / Session)
+        merged_scorecards["RPU ($)"] = merged_scorecards.apply(
+            lambda r: r["AdMob Revenue ($)"] / r["Active Sessions"] if r["Active Sessions"] > 0 else 0.0,
+            axis=1
+        )
+        
+        total_sessions = merged_scorecards["Active Sessions"].sum()
+        avg_comp = merged_scorecards["Avg Completion %"].mean()
+        avg_watch = merged_scorecards["Avg Watch Sec"].mean()
+        total_rev = merged_scorecards["AdMob Revenue ($)"].sum() if "AdMob Revenue ($)" in merged_scorecards else 0.0
+        avg_ecpm = merged_scorecards["eCPM ($)"].mean() if "eCPM ($)" in merged_scorecards else 0.0
+        avg_cpi = merged_scorecards["CPI ($)"].mean()
+        overall_rpu = total_rev / total_sessions if total_sessions > 0 else 0.0
+
+        total_row = pd.DataFrame([{
+            "Region": "TOTAL / OVERALL",
+            "Top City": "All Cities",
+            "Active Sessions": total_sessions,
+            "Avg Completion %": avg_comp,
+            "Top Language": "Mixed",
+            "Avg Watch Sec": avg_watch,
+            "AdMob Revenue ($)": total_rev,
+            "eCPM ($)": avg_ecpm,
+            "CPI ($)": avg_cpi,
+            "RPU ($)": overall_rpu
+        }])
+
+        final_scorecards = pd.concat([merged_scorecards, total_row], ignore_index=True)
+        st_dataframe_custom(final_scorecards, height=270)
+    else:
+        st.info("No regional data found for the selected filter combination.")
 
 st.markdown("---")
 
@@ -539,11 +804,15 @@ drama_perf_df = run_query_df(f"""
     ORDER BY "Episodes Watch" DESC
 """)
 
-if not drama_perf_df.empty:
-    formatted_df = drama_perf_df.copy()
-    formatted_df["Completion Rate"] = formatted_df["Completion Rate"].map(lambda x: f"{x:.1f}%")
-    formatted_df["Revenue"] = formatted_df["Revenue"].map(lambda x: f"${x:,.2f}")
-    formatted_df["Episodes Watch"] = formatted_df["Episodes Watch"].map(lambda x: f"{x:,}")
-    formatted_df["Active Users"] = formatted_df["Active Users"].map(lambda x: f"{x:,}")
-    
-    st_dataframe_custom(formatted_df, height=320)
+if compare_on and where_clause_compare:
+    final_leaderboard = get_comparison_leaderboard(where_clause, where_clause_compare)
+    st_dataframe_custom(final_leaderboard, height=320)
+else:
+    if not drama_perf_df.empty:
+        formatted_df = drama_perf_df.copy()
+        formatted_df["Completion Rate"] = formatted_df["Completion Rate"].map(lambda x: f"{x:.1f}%")
+        formatted_df["Revenue"] = formatted_df["Revenue"].map(lambda x: f"${x:,.2f}")
+        formatted_df["Episodes Watch"] = formatted_df["Episodes Watch"].map(lambda x: f"{x:,}")
+        formatted_df["Active Users"] = formatted_df["Active Users"].map(lambda x: f"{x:,}")
+        
+        st_dataframe_custom(formatted_df, height=320)
